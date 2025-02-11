@@ -1,0 +1,6 @@
+asyncio
+websockets
+py-clob-client
+py-order-utils
+pandas
+numpy
