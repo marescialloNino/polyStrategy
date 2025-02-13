@@ -1,0 +1,14 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+POLYMARKET_HOST = os.getenv("POLYMARKET_HOST")
+POLYMARKET_KEY = os.getenv("POLYMARKET_KEY")
+POLYMARKET_CHAIN_ID = os.getenv("POLYMARKET_CHAIN_ID")
+POLYMARKET_FUNDER = os.getenv("POLYMARKET_FUNDER")
+POLYMARKET_SIGNATURE_TYPE = os.getenv("POLYMARKET_SIGNATURE_TYPE")
+POLYMARKET_API_KEY = os.getenv("POLYMARKET_API_KEY")
+POLYMARKET_API_SECRET = os.getenv("POLYMARKET_API_SECRET")
+POLYMARKET_API_PASSPHRASE = os.getenv("POLYMARKET_API_PASSPHRASE")
