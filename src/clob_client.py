@@ -2,8 +2,14 @@
 import asyncio
 from py_clob_client.constants import POLYGON
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds
-
+from py_clob_client.clob_types import (
+    BookParams,
+    OpenOrderParams,
+    TradeParams,
+    ApiCreds,
+    OrderArgs,
+    MarketOrderArgs
+)
 
 # Import your config variables
 from config import (
@@ -32,24 +38,232 @@ class PolymarketClient:
             )
         )
 
-    def get_available_markets(self):
-        return self.client.get_markets(next_cursor = "")
-
-    def get_order_book(self, market_id):
-        """Fetch the order book for a specific market."""
-        return self.client.get_order_book(market_id)
-
-    async def get_trades(self, market_id):
-        """Fetch recent trades for a specific market."""
-        return await self.client.get_trades(market_id)
-
-    async def stream_market_data(self, market_id, callback):
+    def get_order_book(self, token_id: str):
         """
-        Stream live market data and pass it to a callback function.
-        Adjust the `await asyncio.sleep(1)` interval as needed.
+        Retrieves the order book for a specific token.
+
+        Args:
+            token_id (str): The ID of the token to get the order book for.
+
+        Returns:
+            The order book object as returned by the ClobClient.
         """
-        while True:
-            order_book = await self.get_order_book(market_id)
-            trades = await self.get_trades(market_id)
-            callback(order_book, trades)
-            await asyncio.sleep(1)
+        try:
+            orderbook = self.client.get_order_book(token_id)
+            return orderbook  # Return the native order book object
+        except Exception as e:
+            print(f"Error getting order book for {token_id}: {e}")
+            return None
+
+    def get_multiple_order_books(self, token_ids: list[str]):
+        """
+        Retrieves multiple order books for a list of token IDs.
+
+        Args:
+            token_ids (list[str]): A list of token IDs to retrieve order books for.
+
+        Returns:
+            A list of order book objects as returned by the ClobClient.
+        """
+        try:
+            params = [BookParams(token_id=token_id) for token_id in token_ids]
+            orderbooks = self.client.get_order_books(params)
+            return orderbooks  # Return the native order book objects
+        except Exception as e:
+            print(f"Error getting multiple order books: {e}")
+            return []
+
+    def get_last_trade_price(self, token_id: str) -> float:
+        """
+        Retrieves the last trade price for a specific token.
+
+        Args:
+            token_id (str): The ID of the token.
+
+        Returns:
+            float: The last trade price.
+        """
+        try:
+            last_trade = self.client.get_last_trade_price(token_id)
+            return float(last_trade) if last_trade else None
+        except Exception as e:
+            print(f"Error getting last trade price for {token_id}: {e}")
+            return None
+
+    def get_multiple_last_trade_prices(self, token_ids: list[str]) -> dict[str, float]:
+        """
+        Retrieves the last trade prices for a list of token IDs.
+
+        Args:
+            token_ids (list[str]): A list of token IDs.
+
+        Returns:
+            dict[str, float]: A dictionary mapping token IDs to their last trade prices.
+        """
+        try:
+            params = [BookParams(token_id=token_id) for token_id in token_ids]
+            prices = self.client.get_last_trades_prices(params)
+            return {item['token_id']: float(item['price']) for item in prices}
+        except Exception as e:
+            print(f"Error getting multiple last trade prices: {e}")
+            return {}
+
+    def get_open_orders(self, market: str = None) -> list:
+        """
+        Retrieves open orders for a specific market (or all markets if market is None).
+        Requires API Key authentication.
+
+        Args:
+            market (str, optional): The market (token ID) to filter orders by.
+
+        Returns:
+            list: A list of open order objects.
+        """
+        try:
+            params = OpenOrderParams(market=market) if market else None
+            orders = self.client.get_orders(params=params)
+            return orders
+        except Exception as e:
+            print(f"Error getting open orders for market {market}: {e}")
+            return []
+
+    def get_trades(self, market: str = None, maker_address: str = None) -> list:
+        """
+        Retrieves trade history for a specific market and/or maker address.
+        Requires API Key authentication.
+
+        Args:
+            market (str, optional): The market (token ID) to filter trades by.
+            maker_address (str, optional): The maker address to filter trades by.
+
+        Returns:
+            list: A list of trade objects.
+        """
+        try:
+            params = TradeParams(market=market, maker_address=maker_address) if market or maker_address else None
+            trades = self.client.get_trades(params=params)
+            return trades
+        except Exception as e:
+            print(f"Error getting trade history for market {market} and maker {maker_address}: {e}")
+            return []
+
+    def get_midpoint_price(self, token_id: str) -> float:
+        """
+        Retrieves the midpoint price for a specific token.
+
+        Args:
+            token_id (str): The ID of the token.
+
+        Returns:
+            float: The midpoint price.
+        """
+        try:
+            midpoint = self.client.get_midpoint(token_id)
+            return float(midpoint['mid']) if midpoint else None
+        except Exception as e:
+            print(f"Error getting midpoint price for {token_id}: {e}")
+            return None
+
+    def get_multiple_midpoint_prices(self, token_ids: list[str]) -> dict[str, float]:
+        """
+        Retrieves the midpoint prices for a list of token IDs.
+
+        Args:
+            token_ids (list[str]): A list of token IDs.
+
+        Returns:
+            dict[str, float]: A dictionary mapping token IDs to their midpoint prices.
+        """
+        try:
+            params = [BookParams(token_id=token_id) for token_id in token_ids]
+            midpoints = self.client.get_midpoints(params)
+            return {item['token_id']: float(item['mid']) for item in midpoints}
+        except Exception as e:
+            print(f"Error getting multiple midpoint prices: {e}")
+            return {}
+
+    def get_markets(self) -> list:
+        """
+        Retrieves available markets.
+
+        Returns:
+            list: A list of market objects.
+        """
+        try:
+            markets = self.client.get_simplified_markets()  # Alternatively, self.client.get_markets() for detailed info
+            return markets
+        except Exception as e:
+            print(f"Error getting markets: {e}")
+            return []
+
+    def get_price(self, token_id: str, side: str) -> float:
+        """
+        Retrieves the best bid or ask price for a specific token.
+
+        Args:
+            token_id (str): The ID of the token.
+            side (str): 'BUY' or 'SELL'.
+
+        Returns:
+            float: The best bid or ask price.
+        """
+        try:
+            price_data = self.client.get_price(token_id, side)
+            return float(price_data['price']) if price_data else None
+        except Exception as e:
+            print(f"Error getting {side} price for {token_id}: {e}")
+            return None
+
+    def get_multiple_prices(self, token_ids: list[str], side: str) -> dict[str, float]:
+        """
+        Retrieves the best bid or ask prices for a list of token IDs.
+
+        Args:
+            token_ids (list[str]): A list of token IDs.
+            side (str): 'BUY' or 'SELL'.
+
+        Returns:
+            dict[str, float]: A dictionary mapping token IDs to their best bid or ask prices.
+        """
+        try:
+            params = [BookParams(token_id=token_id, side=side) for token_id in token_ids]
+            prices = self.client.get_prices(params)
+            return {item['token_id']: float(item['price']) for item in prices}
+        except Exception as e:
+            print(f"Error getting multiple {side} prices: {e}")
+            return {}
+
+    def get_spread(self, token_id: str) -> float:
+        """
+        Retrieves the spread for a specific token.
+
+        Args:
+            token_id (str): The ID of the token.
+
+        Returns:
+            float: The spread.
+        """
+        try:
+            spread_data = self.client.get_spread(token_id)
+            return float(spread_data['spread']) if spread_data else None
+        except Exception as e:
+            print(f"Error getting spread for {token_id}: {e}")
+            return None
+
+    def get_multiple_spreads(self, token_ids: list[str]) -> dict[str, float]:
+        """
+        Retrieves the spreads for a list of token IDs.
+
+        Args:
+            token_ids (list[str]): A list of token IDs.
+
+        Returns:
+            dict[str, float]: A dictionary mapping token IDs to their spreads.
+        """
+        try:
+            params = [BookParams(token_id=token_id) for token_id in token_ids]
+            spreads = self.client.get_spreads(params)
+            return {item['token_id']: float(item['spread']) for item in spreads}
+        except Exception as e:
+            print(f"Error getting multiple spreads: {e}")
+            return {}
