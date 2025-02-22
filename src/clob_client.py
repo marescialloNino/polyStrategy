@@ -81,11 +81,11 @@ class PolymarketClient:
             token_id (str): The ID of the token.
 
         Returns:
-            float: The last trade price.
+            dict: {'price': , 'side': }.
         """
         try:
             last_trade = self.client.get_last_trade_price(token_id)
-            return float(last_trade) if last_trade else None
+            return last_trade if last_trade else None
         except Exception as e:
             print(f"Error getting last trade price for {token_id}: {e}")
             return None

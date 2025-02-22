@@ -3,7 +3,7 @@
 import asyncio
 from clob_client import PolymarketClient
 from gamma_client import GammaMarketsClient
-from data_streamer import DataStreamer
+from data_streamer import DataStreamer, MarketDataStreamer
 
 async def main():
 
@@ -37,18 +37,23 @@ async def main():
 
     # print(markets[0])
 
-    
+    market_id = "112744708863056390222838400251590316345033278599357903193546628977027180579530"
 
-    
+    print(clob_client.get_last_trade_price(market_id))
+
+    print(clob_client.get_order_book(market_id))
+
+    print(clob_client.get_open_orders(market_id))
+
     
 
 
 if __name__ == "__main__":
     asyncio.run(main())
     interval = 10  # Stream data every 60 seconds
-    market_id = "75375512812425441118147537458374249330654884833849356040440171987225132577493"
+    lakers_id = "112744708863056390222838400251590316345033278599357903193546628977027180579530"
+    nuggets_id= "50502247422088557767620202985709996240097168327155727604775279463268241746901"
+    market_slug="lakers-nuggets"
     # Create a DataStreamer instance for the market.
-    streamer = DataStreamer(market_id=market_id, interval_seconds=interval)
-
-    # Start streaming data.
+    streamer = MarketDataStreamer(slug=market_slug, token1=lakers_id, token2=nuggets_id, interval_seconds=interval)
     asyncio.run(streamer.stream())
