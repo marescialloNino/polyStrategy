@@ -1,5 +1,4 @@
 
-import asyncio
 from py_clob_client.constants import POLYGON
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import (
@@ -8,8 +7,10 @@ from py_clob_client.clob_types import (
     TradeParams,
     ApiCreds,
     OrderArgs,
-    MarketOrderArgs
+    MarketOrderArgs,
+    OrderType
 )
+from py_clob_client.order_builder.constants import BUY, SELL
 
 # Import your config variables
 from config import (
@@ -267,3 +268,87 @@ class PolymarketClient:
         except Exception as e:
             print(f"Error getting multiple spreads: {e}")
             return {}
+        
+
+    # ==========================
+    # Order Placement Methods
+    # ==========================
+    def place_limit_order(self, token_id: str, price: float, size: float, side: str):
+        """
+        Places a limit order.
+        Args:
+            token_id (str): The token ID for which the order is placed.
+            price (float): The limit price.
+            size (float): The size (number of tokens) to order.
+            side (str): 'BUY' or 'SELL'.
+        Returns:
+            dict: Response from the order placement.
+        """
+        try:
+            order_args = OrderArgs(
+                token_id=token_id,
+                price=price,
+                size=size,
+                side=side,
+            )
+            response = self.client.create_and_post_order(order_args)
+            print(f"Limit order placed: {response}")
+            return response
+        except Exception as e:
+            print(f"Error placing limit order for {token_id}: {e}")
+            return None
+
+    def place_market_order(self, token_id: str, amount: float, side: str):
+        """
+        Places a market order.
+        Args:
+            token_id (str): The token ID for which the order is placed.
+            amount (float): For BUY orders, the collateral amount to spend.
+                            For SELL orders, the number of shares to sell.
+            side (str): 'BUY' or 'SELL'.
+        Returns:
+            dict: Response from the order placement.
+        """
+        try:
+            order_args = MarketOrderArgs(
+                token_id=token_id,
+                amount=amount,
+                side=side,
+            )
+            signed_order = self.client.create_market_order(order_args)
+            response = self.client.post_order(signed_order, orderType=OrderType.FOK)
+            print(f"Market order placed: {response}")
+            return response
+        except Exception as e:
+            print(f"Error placing market order for {token_id}: {e}")
+            return None
+
+    def cancel_order(self, order_id: str):
+        """
+        Cancels an existing order.
+        Args:
+            order_id (str): The ID of the order to cancel.
+        Returns:
+            dict: Response from the cancellation request.
+        """
+        try:
+            response = self.client.cancel(order_id)
+            print(f"Order {order_id} cancelled: {response}")
+            return response
+        except Exception as e:
+            print(f"Error cancelling order {order_id}: {e}")
+            return None
+
+    def cancel_all_orders(self):
+        """
+        Cancels all orders for the current API credentials.
+        Returns:
+            dict: Response from the cancellation request.
+        """
+        try:
+            response = self.client.cancel_all()
+            print(f"All orders cancelled: {response}")
+            return response
+        except Exception as e:
+            print(f"Error cancelling all orders: {e}")
+            return None
