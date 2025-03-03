@@ -1,3 +1,5 @@
 .env
 polymarket_data.db
 polymarket_env
+__pycache__
+.ipynb_checkpoints

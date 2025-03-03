@@ -2,7 +2,7 @@
 
 from py_clob_client.clob_types import OrderArgs, MarketOrderArgs, OrderType
 from py_clob_client.order_builder.constants import BUY, SELL
-from core.polymarket_client import PolymarketClient
+from src.core.clob_client import PolymarketClient
 
 class OrderExecutor:
     def __init__(self):
@@ -38,7 +38,7 @@ class OrderExecutor:
             )
             print(f"Placing LIMIT order: {side} {quantity} of {token_id} at {price}")
             # This call uses py-order-utils via your client to build, sign, and post the order.
-            response = self.client.create_and_post_order(order_args)
+            response = self.client.place_limit_order(token_id=token_id, price=price , size =quantity , side= side)
             return response
 
         elif order_type == "market":
@@ -64,7 +64,7 @@ class OrderExecutor:
         Returns the response from the cancellation API call.
         """
         print(f"Cancelling order: {order_id}")
-        response = self.client.cancel(order_id)
+        response = self.client.cancel_order(order_id)
         return response
 
     def cancel_all_orders(self):

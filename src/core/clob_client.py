@@ -13,7 +13,7 @@ from py_clob_client.clob_types import (
 from py_clob_client.order_builder.constants import BUY, SELL
 
 # Import your config variables
-from config import (
+from src.config import (
     POLYMARKET_HOST,
     POLYMARKET_KEY,
     POLYMARKET_CHAIN_ID,
@@ -29,7 +29,7 @@ class PolymarketClient:
         self.client = ClobClient(
             host=POLYMARKET_HOST,
             key=POLYMARKET_KEY,
-            chain_id=POLYMARKET_CHAIN_ID,
+            chain_id=POLYGON,
             funder=POLYMARKET_FUNDER,
             signature_type=POLYMARKET_SIGNATURE_TYPE,
             creds=ApiCreds(
@@ -291,7 +291,9 @@ class PolymarketClient:
                 size=size,
                 side=side,
             )
-            response = self.client.create_and_post_order(order_args)
+            signed_order = self.client.create_order(order_args)
+
+            response = self.client.post_order(signed_order, OrderType.FOK)
             print(f"Limit order placed: {response}")
             return response
         except Exception as e:
