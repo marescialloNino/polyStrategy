@@ -25,24 +25,41 @@ from src.config import (
 
 class PolymarketClient:
     def __init__(self, base_url=POLYMARKET_HOST):
-        # Ensure chain_id is an integer (strip any extraneous characters)
+        if not all([POLYMARKET_HOST, POLYMARKET_KEY, POLYMARKET_FUNDER]):
+            print("Missing required environment variables: POLYMARKET_HOST, POLYMARKET_KEY, POLYMARKET_FUNDER")
+            raise ValueError("Missing required environment variables")
+
+        # Initial client to derive API keys
+        initial_client = ClobClient(
+            host=POLYMARKET_HOST,
+            key=POLYMARKET_KEY,
+            chain_id=int(POLYMARKET_CHAIN_ID),
+            funder=POLYMARKET_FUNDER,
+            signature_type=int(POLYMARKET_SIGNATURE_TYPE)
+        )
+        
+
+        # Derive API credentials
         try:
-            chain_id = int(POLYMARKET_CHAIN_ID)
-        except Exception:
-            chain_id = int("".join(filter(str.isdigit, POLYMARKET_CHAIN_ID)))
-            
+            creds = initial_client.derive_api_key()
+        except Exception as e:
+            print(f"Failed to derive API credentials: {str(e)}")
+            raise
+
+        # Initialize the authenticated client
         self.client = ClobClient(
             host=POLYMARKET_HOST,
             key=POLYMARKET_KEY,
-            chain_id=chain_id,
+            chain_id=int(POLYMARKET_CHAIN_ID),
             funder=POLYMARKET_FUNDER,
-            signature_type=POLYMARKET_SIGNATURE_TYPE,
+            signature_type=int(POLYMARKET_SIGNATURE_TYPE),
             creds=ApiCreds(
-                api_key=POLYMARKET_API_KEY,
-                api_secret=POLYMARKET_API_SECRET,
-                api_passphrase=POLYMARKET_API_PASSPHRASE,
+                api_key=creds.api_key,
+                api_secret=creds.api_secret,
+                api_passphrase=creds.api_passphrase,
             )
         )
+        print(f"PolymarketClient initialized with address: {self.client.get_address()}")
 
     # Data retrieval methods…
     def get_order_book(self, token_id: str):
