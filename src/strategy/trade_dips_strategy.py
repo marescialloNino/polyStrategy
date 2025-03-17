@@ -1,167 +1,195 @@
+# src/strategy/trade_dips_strategy.py
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from strategy.base_strategy import BaseStrategy
+from .base_strategy import BaseStrategy
+import logging
 
 class TradeDipsStrategy(BaseStrategy):
-    def __init__(self, buy_threshold: float, sell_threshold: float, 
-                 initial_cash: float = 500, shares_per_buy: int = 50, 
-                 take_profit_pct: float = 0.5, stop_loss_pct: float = 0.25):
-        
+    def __init__(self, token1_id: str, token2_id: str, buy_threshold: float, sell_threshold: float, 
+                 initial_cash: float = 10.0, take_profit_pct: float = 0.5, stop_loss_pct: float = 0.25,
+                 max_trades: int = 5):
         super().__init__()
+        self.token1_id = token1_id
+        self.token2_id = token2_id
         self.buy_threshold = buy_threshold
         self.sell_threshold = sell_threshold
         self.initial_cash = initial_cash
-        self.shares_per_buy = shares_per_buy
         self.take_profit_pct = take_profit_pct
         self.stop_loss_pct = stop_loss_pct
-
-        # Internal state variables
-        self.selected_team = None  # Once a team triggers a buy signal, we lock in on it.
-        self.shares = 0
+        self.max_trades = max_trades
+        self.order_value = initial_cash / max_trades  # 2 EUR per trade with 10 EUR initial
+        self.min_order_value = 1.0  # Polymarket minimum threshold
+        self.selected_team = None
         self.cash = initial_cash
-        self.exited = False  # True if take-profit or stop-loss condition triggered
+        self.buy_positions = []  # List of (price, shares, cash_value) tuples
+        self.exited = False
 
     @staticmethod
     def compute_returns(series: pd.Series):
-        """Compute the percentage returns of a price series."""
         returns = series.pct_change().fillna(0)
         return returns
 
     @staticmethod
     def compute_positions(returns: pd.Series, buy_threshold: float, sell_threshold: float):
-        """Generate indices for buy/sell signals based on returns and thresholds."""
         buy = np.where(returns < buy_threshold)[0]
         sell = np.where(returns > sell_threshold)[0]
         return buy, sell
 
+    def calculate_shares_for_value(self, price: float) -> tuple[float, float]:
+        """
+        Calculate number of shares to buy/sell to match our target order value.
+        Returns (shares, actual_value) tuple.
+        """
+        target_value = min(self.order_value, self.cash)
+        if target_value < self.min_order_value:
+            return 0.0, 0.0
+            
+        shares = target_value / price
+        actual_value = shares * price
+        return shares, actual_value
+
     def generate_signal(self) -> dict | None:
-        """
-        Process the accumulated data (assumed to be a list of dicts, which we convert to a DataFrame)
-        and generate a trading signal if conditions are met.
-        """
-        if not self.data:
+        if not self.data or len(self.data) < 2:
+            logging.info(f"Not enough data yet: {len(self.data)} rows")
             return None
         
         df = pd.DataFrame(self.data)
-        
-        # Ensure a timestamp column is present and parsed as datetime.
         if 'timestamp' in df.columns and not np.issubdtype(df['timestamp'].dtype, np.datetime64):
             df['timestamp'] = pd.to_datetime(df['timestamp'])
         
-        # For this strategy, assume that the last two non-timestamp columns represent team prices.
-        columns = list(df.columns)
-        if 'timestamp' in columns:
-            columns.remove('timestamp')
-        if len(columns) < 2:
-            return None  # Not enough price data
+        team1, team2 = self.token1_id, self.token2_id
+        returns_team1 = self.compute_returns(df[f"{team1}_best_buy"])  # For buying, look at best sell price
+        returns_team2 = self.compute_returns(df[f"{team2}_best_buy"])
         
-        team1, team2 = columns[-2], columns[-1]
+        logging.info(f"Team1 returns: {returns_team1.iloc[-1]:.4f}, Team2 returns: {returns_team2.iloc[-1]:.4f}")
         
-        # Compute returns for both teams.
-        returns_team1 = self.compute_returns(df[team1])
-        returns_team2 = self.compute_returns(df[team2])
-        
-        # Get indices where returns cross thresholds.
         buy_team1, sell_team1 = self.compute_positions(returns_team1, self.buy_threshold, self.sell_threshold)
         buy_team2, sell_team2 = self.compute_positions(returns_team2, self.buy_threshold, self.sell_threshold)
         
-        # Use the last row of data as the “current” time.
         current_index = df.index[-1]
-        current_time = df['timestamp'].iloc[-1] if 'timestamp' in df.columns else datetime.now()
+        current_time = df['timestamp'].iloc[-1]
         current_prices = df.iloc[-1]
         
         signal = None
         
-        # If no team has yet been selected, check if a buy signal appears for either team.
         if self.selected_team is None:
-            if current_index in buy_team1:
-                self.selected_team = team1
-                print(f"Selected Team: {team1} at {current_time}")
-            elif current_index in buy_team2:
-                self.selected_team = team2
-                print(f"Selected Team: {team2} at {current_time}")
-        
-        if self.selected_team is not None:
-            current_price = current_prices[self.selected_team]
-            # Check for a buy signal on the selected team.
-            if self.selected_team == team1 and current_index in buy_team1:
-                total_cost = current_price * self.shares_per_buy
-                if self.cash >= total_cost:
-                    self.shares += self.shares_per_buy
-                    self.cash -= total_cost
-                    print(f"Bought {self.shares_per_buy} shares at {current_price} on {team1} at {current_time}")
+            if current_index in buy_team1 and self.cash >= self.min_order_value:
+                buy_price = current_prices[f"{team1}_best_sell"]
+                shares, actual_value = self.calculate_shares_for_value(buy_price)
+                if shares > 0:
+                    self.selected_team = team1
                     signal = {
-                        "token_id": team1,    # In practice, map this to a token ID.
+                        "token_id": team1,
                         "order_type": "limit",
                         "side": "BUY",
-                        "price": current_price,
-                        "quantity": self.shares_per_buy
+                        "quantity": shares,
+                        "price": buy_price
                     }
-            elif self.selected_team == team2 and current_index in buy_team2:
-                total_cost = current_price * self.shares_per_buy
-                if self.cash >= total_cost:
-                    self.shares += self.shares_per_buy
-                    self.cash -= total_cost
-                    print(f"Bought {self.shares_per_buy} shares at {current_price} on {team2} at {current_time}")
+                    logging.info(f"Selected {team1} and generated BUY limit order for {shares:.4f} shares at {buy_price:.4f} (€{actual_value:.2f})")
+            elif current_index in buy_team2 and self.cash >= self.min_order_value:
+                buy_price = current_prices[f"{team2}_best_sell"]
+                shares, actual_value = self.calculate_shares_for_value(buy_price)
+                if shares > 0:
+                    self.selected_team = team2
                     signal = {
                         "token_id": team2,
                         "order_type": "limit",
                         "side": "BUY",
-                        "price": current_price,
-                        "quantity": self.shares_per_buy
+                        "quantity": shares,
+                        "price": buy_price
                     }
+                    logging.info(f"Selected {team2} and generated BUY limit order for {shares:.4f} shares at {buy_price:.4f} (€{actual_value:.2f})")
+        
+        elif self.selected_team is not None:
+            current_buy_price = current_prices[f"{self.selected_team}_best_buy"]
+            current_sell_price = current_prices[f"{self.selected_team}_best_sell"]
             
-            # Check for a sell signal (if shares are held).
-            if self.selected_team == team1 and current_index in sell_team1 and self.shares > 0:
-                print(f"Sell {self.shares} shares at {current_price} on {team1} at {current_time}")
+            if self.selected_team == team1 and current_index in buy_team1 and self.cash >= self.min_order_value:
+                shares, actual_value = self.calculate_shares_for_value(current_sell_price)
+                if shares > 0:
+                    signal = {
+                        "token_id": team1,
+                        "order_type": "limit",
+                        "side": "BUY",
+                        "quantity": shares,
+                        "price": current_sell_price
+                    }
+                    logging.info(f"Generated BUY limit order for {shares:.4f} shares at {current_sell_price:.4f} (€{actual_value:.2f})")
+            elif self.selected_team == team2 and current_index in buy_team2 and self.cash >= self.min_order_value:
+                shares, actual_value = self.calculate_shares_for_value(current_sell_price)
+                if shares > 0:
+                    signal = {
+                        "token_id": team2,
+                        "order_type": "limit",
+                        "side": "BUY",
+                        "quantity": shares,
+                        "price": current_sell_price
+                    }
+                    logging.info(f"Generated BUY limit order for {shares:.4f} shares at {current_sell_price:.4f} (€{actual_value:.2f})")
+            elif self.selected_team == team1 and current_index in sell_team1 and self.buy_positions:
+                lowest_buy = min(self.buy_positions, key=lambda x: x[0])
+                buy_price, shares, cash_value = lowest_buy
+                self.buy_positions.remove(lowest_buy)
                 signal = {
                     "token_id": team1,
                     "order_type": "limit",
                     "side": "SELL",
-                    "price": current_price,
-                    "quantity": self.shares
+                    "quantity": shares,
+                    "price": current_buy_price
                 }
-                self.cash += self.shares * current_price
-                self.shares = 0
-            elif self.selected_team == team2 and current_index in sell_team2 and self.shares > 0:
-                print(f"Sell {self.shares} shares at {current_price} on {team2} at {current_time}")
+                self.cash += shares * current_buy_price
+                logging.info(f"Generated SELL limit order for {shares:.4f} shares at {current_buy_price:.4f}")
+            elif self.selected_team == team2 and current_index in sell_team2 and self.buy_positions:
+                lowest_buy = min(self.buy_positions, key=lambda x: x[0])
+                buy_price, shares, cash_value = lowest_buy
+                self.buy_positions.remove(lowest_buy)
                 signal = {
                     "token_id": team2,
                     "order_type": "limit",
                     "side": "SELL",
-                    "price": current_price,
-                    "quantity": self.shares
+                    "quantity": shares,
+                    "price": current_buy_price
                 }
-                self.cash += self.shares * current_price
-                self.shares = 0
+                self.cash += shares * current_buy_price
+                logging.info(f"Generated SELL limit order for {shares:.4f} shares at {current_buy_price:.4f}")
             
-            # Check for take-profit or stop-loss conditions.
-            position_value = self.shares * current_price
+            # Take-profit or stop-loss
+            position_value = sum(shares * current_buy_price for _, shares, _ in self.buy_positions)
             current_pnl = position_value + self.cash - self.initial_cash
-            if current_pnl >= self.take_profit_pct * self.initial_cash and self.shares > 0:
-                print(f"Take-profit triggered at {current_time}: Sell all at {current_price}")
+            if current_pnl >= self.take_profit_pct * self.initial_cash and self.buy_positions:
+                total_shares = sum(shares for _, shares, _ in self.buy_positions)
                 signal = {
                     "token_id": self.selected_team,
                     "order_type": "limit",
                     "side": "SELL",
-                    "price": current_price,
-                    "quantity": self.shares
+                    "quantity": total_shares,
+                    "price": current_buy_price
                 }
-                self.cash += self.shares * current_price
-                self.shares = 0
+                self.cash += total_shares * current_buy_price
+                self.buy_positions.clear()
                 self.exited = True
-            elif current_pnl <= -self.stop_loss_pct * self.initial_cash and self.shares > 0:
-                print(f"Stop-loss triggered at {current_time}: Sell all at {current_price}")
+                logging.info(f"Take-profit triggered for {self.selected_team}, selling {total_shares:.4f} shares at {current_buy_price:.4f}")
+            elif current_pnl <= -self.stop_loss_pct * self.initial_cash and self.buy_positions:
+                total_shares = sum(shares for _, shares, _ in self.buy_positions)
                 signal = {
                     "token_id": self.selected_team,
                     "order_type": "limit",
                     "side": "SELL",
-                    "price": current_price,
-                    "quantity": self.shares
+                    "quantity": total_shares,
+                    "price": current_buy_price
                 }
-                self.cash += self.shares * current_price
-                self.shares = 0
+                self.cash += total_shares * current_buy_price
+                self.buy_positions.clear()
                 self.exited = True
+                logging.info(f"Stop-loss triggered for {self.selected_team}, selling {total_shares:.4f} shares at {current_buy_price:.4f}")
         
         return signal
+
+    def record_buy(self, price: float, shares: float, cash_value: float):
+        """Record a buy after execution with actual shares from Polymarket."""
+        if self.cash >= cash_value:
+            self.buy_positions.append((price, shares, cash_value))
+            self.cash -= cash_value
+        else:
+            logging.warning(f"Insufficient cash for buy: {cash_value} > {self.cash}")

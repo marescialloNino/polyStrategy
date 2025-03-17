@@ -2,7 +2,7 @@ import asyncio
 import os
 import csv
 from datetime import datetime
-from core.clob_client import PolymarketClient  # Update with your actual module name
+from ..core.clob_client import PolymarketClient  # Update with your actual module name
 
 class DataStreamer:
     def __init__(self, market_id: str, interval_seconds: int = 60, filename: str = "data_stream.csv"):
