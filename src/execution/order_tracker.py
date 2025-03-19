@@ -1,10 +1,9 @@
 import asyncio
-import json
-import websockets
 import logging
 from typing import Dict, List, Callable, Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from src.core.polymarket_websocket_client import PolymarketWebSocketClient
 
 @dataclass
 class OrderStatus:
@@ -16,7 +15,7 @@ class OrderStatus:
     status: str
     filled_quantity: float = 0.0
     timestamp: datetime = None
-    timeout_minutes: int = 30  # Default timeout of 30 minutes
+    timeout_minutes: int = 30
     last_check: datetime = None
 
     @property
@@ -29,72 +28,67 @@ class OrderStatus:
     def needs_status_check(self) -> bool:
         if not self.last_check:
             return True
-        return datetime.utcnow() - self.last_check > timedelta(minutes=1)  # Check every minute
+        return datetime.utcnow() - self.last_check > timedelta(minutes=1)
 
 class OrderTracker:
     def __init__(
         self, 
-        ws_url: str, 
+        ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/",
         callback: Callable = None,
-        executor: Optional['OrderExecutor'] = None,  # Reference to executor for cancelling orders
-        status_check_interval: int = 60,  # Seconds between status checks
-        cleanup_interval: int = 300,  # Seconds between cleanup runs
+        executor: Optional['OrderExecutor'] = None,
+        status_check_interval: int = 60,
+        cleanup_interval: int = 300,
+        api_key: str = None,
+        api_secret: str = None,
+        api_passphrase: str = None
     ):
-        self.ws_url = ws_url
         self.callback = callback
         self.executor = executor
         self.status_check_interval = status_check_interval
         self.cleanup_interval = cleanup_interval
         self.active_orders: Dict[str, OrderStatus] = {}
-        self.ws = None
         self.running = False
         self.tasks: List[asyncio.Task] = []
+        
+        # Initialize WebSocket client with our message callback
+        self.ws_client = PolymarketWebSocketClient(
+            api_key=api_key,
+            api_secret=api_secret,
+            api_passphrase=api_passphrase,
+            message_callback=self.handle_ws_message,
+            ws_url=ws_url
+        )
 
     async def start(self):
-        """Start the WebSocket connection and maintenance tasks."""
+        """Start the order tracker."""
         self.running = True
         self.tasks = [
-            asyncio.create_task(self._run_websocket()),
+            asyncio.create_task(self.ws_client.start("user")),  # Start WebSocket client in user channel
             asyncio.create_task(self._check_order_statuses()),
             asyncio.create_task(self._cleanup_orders())
         ]
         await asyncio.gather(*self.tasks)
 
     async def stop(self):
-        """Stop all tracking and cleanup."""
+        """Stop tracking and cleanup."""
         self.running = False
-        if self.ws:
-            await self.ws.close()
+        
+        # Stop WebSocket client
+        await self.ws_client.stop()
         
         # Cancel all tasks
         for task in self.tasks:
-            task.cancel()
+            try:
+                task.cancel()
+            except Exception:
+                pass
         
         # Cancel all active orders
         for order_id in list(self.active_orders.keys()):
             await self.cancel_order(order_id)
 
-    async def _run_websocket(self):
-        """Main WebSocket connection loop."""
-        while self.running:
-            try:
-                async with websockets.connect(self.ws_url) as websocket:
-                    self.ws = websocket
-                    await self.subscribe_to_orders()
-                    
-                    while self.running:
-                        message = await websocket.recv()
-                        await self.handle_message(json.loads(message))
-                        
-            except websockets.exceptions.ConnectionClosed:
-                logging.error("WebSocket connection closed. Reconnecting...")
-                await asyncio.sleep(5)
-            except Exception as e:
-                logging.error(f"WebSocket error: {e}")
-                await asyncio.sleep(5)
-
     async def _check_order_statuses(self):
-        """Periodically check status of active orders."""
+        """Periodically check status of active orders via REST API as a backup."""
         while self.running:
             try:
                 for order_id, order in list(self.active_orders.items()):
@@ -181,6 +175,80 @@ class OrderTracker:
             del self.active_orders[order.order_id]
             logging.info(f"Order {order.order_id} cancelled and removed from tracking")
 
+    async def handle_ws_message(self, message):
+        """Handle WebSocket messages from Polymarket."""
+        try:
+            if isinstance(message, list):
+                for msg in message:
+                    await self._process_ws_message(msg)
+            else:
+                await self._process_ws_message(message)
+        except Exception as e:
+            logging.error(f"Error handling WebSocket message: {e}")
+
+    async def _process_ws_message(self, msg):
+        """Process a single WebSocket message."""
+        event_type = msg.get("event_type")
+        
+        if event_type == "trade":
+            await self._handle_trade_message(msg)
+        elif event_type == "order":
+            await self._handle_order_message(msg)
+
+    async def _handle_trade_message(self, message: dict):
+        """Handle trade messages which indicate orders being filled."""
+        maker_orders = message.get('maker_orders', [])
+        
+        for maker_order in maker_orders:
+            order_id = maker_order.get('order_id')
+            if order_id in self.active_orders:
+                order = self.active_orders[order_id]
+                filled_amount = float(maker_order.get('matched_amount', 0))
+                price = float(maker_order.get('price', 0))
+                
+                order.filled_quantity += filled_amount
+                order.status = "matched"
+                
+                logging.info(f"Order {order_id} matched: {filled_amount} at {price}")
+                
+                if order.filled_quantity >= order.quantity:
+                    if self.callback:
+                        await self.callback(order)
+                    del self.active_orders[order_id]
+                    logging.info(f"Order {order_id} fully filled and removed from tracking")
+
+    async def _handle_order_message(self, message: dict):
+        """Handle order status update messages."""
+        action = message.get('action')
+        order_id = message.get('order_id')
+        
+        if order_id in self.active_orders:
+            order = self.active_orders[order_id]
+            
+            if action == "PLACEMENT":
+                order.status = "live"
+                logging.info(f"Order {order_id} placed successfully")
+                
+            elif action == "UPDATE":
+                new_filled = float(message.get('matched_amount', 0))
+                if new_filled > order.filled_quantity:
+                    order.filled_quantity = new_filled
+                    logging.info(f"Order {order_id} updated: {order.filled_quantity}/{order.quantity} filled")
+                
+                if order.filled_quantity >= order.quantity:
+                    if self.callback:
+                        await self.callback(order)
+                    del self.active_orders[order_id]
+                    logging.info(f"Order {order_id} fully filled and removed from tracking")
+                    
+            elif action == "CANCELLATION":
+                order.status = "cancelled"
+                if self.callback:
+                    await self.callback(order)
+                del self.active_orders[order_id]
+                logging.info(f"Order {order_id} cancelled and removed from tracking")
+
+    # Utility methods for getting order information
     def get_order_status(self, order_id: str) -> Optional[OrderStatus]:
         """Get current status of an order."""
         return self.active_orders.get(order_id)
@@ -199,44 +267,4 @@ class OrderTracker:
             order.quantity * order.price 
             for order in self.active_orders.values() 
             if order.token_id == token_id
-        )
-
-    async def subscribe_to_orders(self):
-        """Subscribe to order updates on the WebSocket."""
-        subscribe_message = {
-            "type": "subscribe",
-            "channel": "orders"
-        }
-        await self.ws.send(json.dumps(subscribe_message))
-    
-    async def handle_message(self, message: dict):
-        """
-        Handle incoming WebSocket messages.
-        
-        Args:
-            message: Parsed WebSocket message
-        """
-        if message.get("type") == "order_update":
-            order_id = message.get("orderId")
-            if order_id in self.active_orders:
-                order = self.active_orders[order_id]
-                
-                # Update order status
-                new_status = message.get("status")
-                filled_quantity = float(message.get("filledQuantity", 0))
-                order.status = new_status
-                order.filled_quantity = filled_quantity
-                
-                logging.info(f"Order {order_id} update: status={new_status}, filled={filled_quantity}")
-                
-                # Check if order is completely filled
-                if new_status == "filled" or filled_quantity >= order.quantity:
-                    if self.callback:
-                        await self.callback(order)
-                    del self.active_orders[order_id]
-                    logging.info(f"Order {order_id} completed and removed from tracking")
-                
-                # Check if order is cancelled
-                elif new_status == "cancelled":
-                    del self.active_orders[order_id]
-                    logging.info(f"Order {order_id} cancelled and removed from tracking") 
+        ) 

@@ -25,7 +25,10 @@ class TradingBot:
         initial_cash: float = 10.0,
         buy_threshold: float = -0.01,
         sell_threshold: float = 0.01,
-        ws_url: str = "wss://trading-api.polymarket.com/ws"  # Add WebSocket URL
+        ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/user",
+        api_key: str = None,
+        api_secret: str = None,
+        api_passphrase: str = None
     ):
         self.market_slug = market_slug
         self.token1_id = token1_id
@@ -33,6 +36,11 @@ class TradingBot:
         self.interval_seconds = interval_seconds
         self.max_trades = max_trades
         self.initial_cash = initial_cash
+        
+        # Configuration for WebSocket
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.api_passphrase = api_passphrase
         
         self.streamer = MarketDataStreamer(
             slug=market_slug,
@@ -53,12 +61,16 @@ class TradingBot:
         self.last_row_count = 0
         self.open_trades = 0
         
+        # Initialize order tracker with API credentials
         self.order_tracker = OrderTracker(
             ws_url=ws_url,
             callback=self.handle_order_filled,
             executor=self.executor,
             status_check_interval=60,
-            cleanup_interval=300
+            cleanup_interval=300,
+            api_key=api_key,
+            api_secret=api_secret,
+            api_passphrase=api_passphrase
         )
 
     async def stream_data(self):

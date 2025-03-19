@@ -23,6 +23,8 @@ from ..config import (
     POLYMARKET_API_PASSPHRASE
 )
 
+import logging
+
 class PolymarketClient:
     def __init__(self, base_url=POLYMARKET_HOST):
         if not all([POLYMARKET_HOST, POLYMARKET_KEY, POLYMARKET_FUNDER]):
@@ -164,3 +166,188 @@ class PolymarketClient:
         except Exception as e:
             print(f"Error cancelling all orders: {e}")
             return None
+
+    def search_markets_by_keyword(self, keyword, market_status=None, limit=None):
+        """
+        Search for markets containing a specific keyword in their slug.
+        
+        Args:
+            keyword (str): The keyword to search for in market slugs
+            market_status (str, optional): Filter by market status (e.g., 'open', 'closed')
+            limit (int, optional): Maximum number of markets to return
+            
+        Returns:
+            list: Markets matching the keyword in their slug
+        """
+        try:
+            # First get all markets (potentially filtered by status)
+            all_markets = self.client.get_markets(status=market_status, limit=limit)
+            
+            # Then filter these markets by keyword in the slug
+            matching_markets = []
+            for market in all_markets:
+                slug = market.get('slug', '').lower()
+                if keyword.lower() in slug:
+                    matching_markets.append(market)
+            
+            logging.info(f"Found {len(matching_markets)} markets matching keyword '{keyword}'")
+            return matching_markets
+            
+        except Exception as e:
+            logging.error(f"Error searching markets with keyword '{keyword}': {e}")
+            return []
+
+    def filter_markets(self, 
+                   keyword=None, 
+                   market_status=None, 
+                   min_volume=None, 
+                   max_volume=None,
+                   min_liquidity=None,
+                   category=None,
+                   token_id=None,
+                   limit=None):
+        """
+        Filter markets by multiple criteria including keyword in slug.
+        
+        Args:
+            keyword (str, optional): Keyword to search for in market slugs
+            market_status (str, optional): Market status filter (e.g. 'open', 'closed')
+            min_volume (float, optional): Minimum trading volume
+            max_volume (float, optional): Maximum trading volume
+            min_liquidity (float, optional): Minimum liquidity
+            category (str, optional): Market category
+            token_id (str, optional): Specific token ID to look for
+            limit (int, optional): Maximum number of markets to return
+            
+        Returns:
+            list: Markets matching all specified criteria
+        """
+        try:
+            # Get all markets (potentially filtered by status)
+            all_markets = self.client.get_markets(status=market_status, limit=limit)
+            
+            # Apply additional filters
+            filtered_markets = []
+            
+            for market in all_markets:
+                # Start with the assumption that the market matches
+                matches = True
+                
+                # Apply keyword filter on slug if specified
+                if keyword and keyword.lower() not in market.get('slug', '').lower():
+                    matches = False
+                    
+                # Apply volume filter if specified
+                if matches and min_volume is not None:
+                    volume = float(market.get('volume', 0))
+                    if volume < min_volume:
+                        matches = False
+                        
+                if matches and max_volume is not None:
+                    volume = float(market.get('volume', 0))
+                    if volume > max_volume:
+                        matches = False
+                        
+                # Apply liquidity filter if specified
+                if matches and min_liquidity is not None:
+                    liquidity = float(market.get('liquidity', 0))
+                    if liquidity < min_liquidity:
+                        matches = False
+                        
+                # Apply category filter if specified
+                if matches and category is not None:
+                    if market.get('category') != category:
+                        matches = False
+                        
+                # Apply token_id filter if specified
+                if matches and token_id is not None:
+                    tokens = market.get('tokens', [])
+                    token_found = any(token.get('token_id') == token_id for token in tokens)
+                    if not token_found:
+                        matches = False
+                    
+                # If market passed all filters, add it to results
+                if matches:
+                    filtered_markets.append(market)
+                    
+            logging.info(f"Found {len(filtered_markets)} markets matching all criteria")
+            return filtered_markets
+            
+        except Exception as e:
+            logging.error(f"Error filtering markets: {e}")
+            return []
+
+    def get_market_by_slug_keyword(self, keyword):
+        """
+        Get a specific market by searching for a keyword in its slug.
+        Returns the first match if multiple markets contain the keyword.
+        
+        Args:
+            keyword (str): Keyword to search for in market slugs
+            
+        Returns:
+            dict: Market data for the first matching market, or None if not found
+        """
+        matching_markets = self.search_markets_by_keyword(keyword)
+        
+        if matching_markets:
+            if len(matching_markets) > 1:
+                logging.warning(f"Multiple markets found with keyword '{keyword}'. Returning the first match.")
+                for idx, market in enumerate(matching_markets):
+                    logging.info(f"Match {idx+1}: {market.get('slug')} - {market.get('question')}")
+            
+            return matching_markets[0]
+        else:
+            logging.warning(f"No markets found with keyword '{keyword}'")
+            return None
+
+    def get_tokens_for_market_by_keyword(self, keyword):
+        """
+        Get token IDs for a market found by keyword search in its slug.
+        
+        Args:
+            keyword (str): Keyword to search for in market slugs
+            
+        Returns:
+            tuple: (market_slug, token1_id, token2_id) or (None, None, None) if not found
+        """
+        market = self.get_market_by_slug_keyword(keyword)
+        
+        if market and 'tokens' in market and len(market['tokens']) >= 2:
+            slug = market.get('slug')
+            token1_id = market['tokens'][0]['token_id']
+            token2_id = market['tokens'][1]['token_id']
+            
+            logging.info(f"Found tokens for market '{slug}':")
+            logging.info(f"Token1 ID: {token1_id}")
+            logging.info(f"Token2 ID: {token2_id}")
+            
+            return slug, token1_id, token2_id
+        else:
+            logging.warning(f"Could not find tokens for market with keyword '{keyword}'")
+            return None, None, None
+
+    def filter_markets_by_slug_keyword(self, markets, keyword):
+        """
+        Filter markets by keyword in their slug.
+        
+        Args:
+            markets (list): List of markets already filtered by other criteria
+            keyword (str): Keyword to search for in the slug
+            
+        Returns:
+            list: Markets that contain the keyword in their slug
+        """
+        if not keyword:
+            return markets
+        
+        keyword = keyword.lower()
+        filtered_markets = []
+        
+        for market in markets:
+            slug = market.get('slug', '').lower()
+            if keyword in slug:
+                filtered_markets.append(market)
+        
+        logging.info(f"Found {len(filtered_markets)} markets with '{keyword}' in slug")
+        return filtered_markets

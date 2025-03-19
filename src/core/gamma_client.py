@@ -127,6 +127,36 @@ class GammaMarketsClient:
                 return None
 
         return all_markets
+    
+
+    def filter_markets_by_slug_keyword(self, markets, keyword):
+        """
+        Filter markets by keyword in their slug.
+        
+        Args:
+            markets (list): List of markets already filtered by other criteria
+            keyword (str): Keyword to search for in the slug
+            
+        Returns:
+            list: Markets that contain the keyword in their slug
+        """
+        if not keyword:
+            return markets
+        
+        keyword = keyword.lower()
+        filtered_markets = []
+        
+        for market in markets:
+            slug = market.get('slug', '').lower()
+            if keyword in slug:
+                filtered_markets.append(market)
+        
+        print(f"Found {len(filtered_markets)} markets with '{keyword}' in slug")
+        return filtered_markets
+
+
+
+
         
     def get_market(self, id):
 
