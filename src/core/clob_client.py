@@ -12,7 +12,7 @@ from py_clob_client.clob_types import (
 )
 from py_clob_client.order_builder.constants import BUY, SELL
 
-from ..config import (
+from config import (
     POLYMARKET_HOST,
     POLYMARKET_KEY,
     POLYMARKET_CHAIN_ID,

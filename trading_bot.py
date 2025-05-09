@@ -20,12 +20,12 @@ class TradingBot:
         market_slug: str,
         token1_id: str,
         token2_id: str,
-        interval_seconds: int = 10,
-        max_trades: int = 5,
-        initial_cash: float = 10.0,
-        buy_threshold: float = -0.01,
-        sell_threshold: float = 0.01,
-        ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/user",
+        interval_seconds: int = 90,
+        max_trades: int = 2,
+        initial_cash: float = 2.0,
+        buy_threshold: float = -0.04,
+        sell_threshold: float = 0.04,
+        ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/",
         api_key: str = None,
         api_secret: str = None,
         api_passphrase: str = None
@@ -61,13 +61,13 @@ class TradingBot:
         self.last_row_count = 0
         self.open_trades = 0
         
-        # Initialize order tracker with API credentials
+        # Use the proper OrderTracker with your existing PolymarketWebSocketClient
         self.order_tracker = OrderTracker(
-            ws_url=ws_url,
             callback=self.handle_order_filled,
             executor=self.executor,
-            status_check_interval=60,
+            status_check_interval=10,
             cleanup_interval=300,
+            ws_url=ws_url,
             api_key=api_key,
             api_secret=api_secret,
             api_passphrase=api_passphrase
